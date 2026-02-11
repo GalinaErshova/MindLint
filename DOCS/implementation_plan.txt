@@ -1,0 +1,286 @@
+==============================================================
+  MindLint — План реализации Telegram-бота
+  Python + aiogram 3.x | SQLite | OpenAI + Anthropic + Groq
+==============================================================
+
+КОНТЕКСТ
+--------
+MindLint — AI-инструмент логического анализа решений.
+Пользователь пишет утверждение/решение → бот анализирует
+логическую структуру через LLM и возвращает разбор:
+- Декомпозиция на факты, причины, условия, выводы
+- Поиск паттернов: подмена причины, ложная необходимость,
+  циклическая логика, неопределённое условие, универсальное оправдание
+- Без советов, психологии и оценки личности
+
+
+==============================================================
+СТРУКТУРА ПАПОК
+==============================================================
+
+MindLint/
+│
+├── .env.example                  # Шаблон переменных окружения
+├── .gitignore                    # Правила игнорирования git
+├── .cursorrules                  # Правила для AI-ассистента
+├── requirements.txt              # Зависимости Python
+├── alembic.ini                   # Конфиг миграций БД
+├── main.py                       # Точка входа (запуск бота)
+│
+├── DOCS/                         # Документация продукта
+├── notes/                        # Заметки
+│
+├── app/                          # Основной пакет приложения
+│   ├── __init__.py
+│   ├── config.py                 # Настройки из .env (pydantic-settings)
+│   ├── bot.py                    # Bot + Dispatcher + роутеры
+│   │
+│   ├── handlers/                 # Обработчики команд (aiogram Router)
+│   │   ├── __init__.py           # Регистрация всех роутеров
+│   │   ├── start.py              # /start, /help — онбординг
+│   │   ├── analyze.py            # Текст → анализ через LLM (основной)
+│   │   ├── journal.py            # /journal — журнал решений
+│   │   ├── patterns.py           # /patterns — повторяющиеся паттерны
+│   │   ├── settings.py           # /settings — настройки пользователя
+│   │   └── admin.py              # /stats, /broadcast — админ
+│   │
+│   ├── keyboards/                # Клавиатуры Telegram
+│   │   ├── __init__.py
+│   │   ├── inline.py             # InlineKeyboardMarkup
+│   │   └── reply.py              # ReplyKeyboardMarkup
+│   │
+│   ├── states/                   # FSM-состояния
+│   │   ├── __init__.py
+│   │   └── analysis.py           # Состояния многошагового анализа
+│   │
+│   ├── middlewares/               # Middleware aiogram
+│   │   ├── __init__.py
+│   │   ├── database.py           # Инъекция DB-сессии
+│   │   ├── throttling.py         # Rate limiting
+│   │   └── admin_check.py        # Проверка админа
+│   │
+│   ├── filters/                  # Кастомные фильтры
+│   │   ├── __init__.py
+│   │   └── admin.py              # IsAdmin фильтр
+│   │
+│   ├── services/                 # Бизнес-логика
+│   │   ├── __init__.py
+│   │   ├── llm/                  # Абстракция LLM-провайдеров
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py           # ABC: BaseLLMProvider + LLMResponse
+│   │   │   ├── openai.py         # OpenAI (AsyncOpenAI)
+│   │   │   ├── anthropic.py      # Anthropic (AsyncAnthropic)
+│   │   │   ├── groq.py           # Groq (AsyncGroq) — БЕСПЛАТНЫЙ
+│   │   │   └── factory.py        # Фабрика провайдеров
+│   │   │
+│   │   ├── analysis.py           # Оркестрация анализа
+│   │   ├── journal.py            # Работа с журналом
+│   │   └── pattern_tracker.py    # Обнаружение паттернов
+│   │
+│   ├── database/                 # Слой БД
+│   │   ├── __init__.py
+│   │   ├── engine.py             # async engine + sessionmaker
+│   │   ├── models/               # ORM-модели
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py           # DeclarativeBase
+│   │   │   ├── user.py           # Пользователь
+│   │   │   └── analysis.py       # Анализ (журнал)
+│   │   │
+│   │   └── repositories/         # Репозитории (CRUD)
+│   │       ├── __init__.py
+│   │       ├── user.py           # UserRepository
+│   │       └── analysis.py       # AnalysisRepository
+│   │
+│   ├── prompts/                  # Промпты для LLM
+│   │   ├── __init__.py
+│   │   └── system_prompt.txt     # Системный промпт MindLint
+│   │
+│   └── utils/                    # Утилиты
+│       ├── __init__.py
+│       ├── logging_config.py     # Настройка логирования
+│       ├── text_formatter.py     # Форматирование для Telegram
+│       └── typing_action.py      # Индикатор "печатает..."
+│
+├── migrations/                   # Alembic-миграции
+│   ├── env.py
+│   ├── script.py.mako
+│   └── versions/
+│
+└── tests/                        # Тесты
+    ├── __init__.py
+    ├── conftest.py
+    ├── test_handlers/
+    ├── test_services/
+    └── test_database/
+
+
+==============================================================
+LLM-ПРОВАЙДЕРЫ
+==============================================================
+
+Используется Strategy Pattern с абстрактным классом и фабрикой.
+Переключение — одна переменная LLM_PROVIDER в .env.
+
+┌─────────────┬───────────────┬──────────────┬──────────────────────────┐
+│ Провайдер   │ SDK           │ Бесплатный?  │ Модель по умолчанию      │
+├─────────────┼───────────────┼──────────────┼──────────────────────────┤
+│ Groq        │ groq          │ ДА           │ llama-3.3-70b-versatile  │
+│ Anthropic   │ anthropic     │ Нет          │ claude-sonnet-4-20250514 │
+│ OpenAI      │ openai        │ Нет          │ gpt-4o                   │
+└─────────────┴───────────────┴──────────────┴──────────────────────────┘
+
+GROQ (бесплатный):
+  - 30 запросов/мин, 14 400 запросов/день
+  - Регистрация без кредитной карты: console.groq.com
+  - Модели: Llama 3.3 70B, Llama 3.1 8B, Mixtral 8x7B, Gemma 2 9B
+  - Очень быстрый инференс (LPU)
+  - SDK интерфейс идентичен OpenAI
+
+Рекомендация:
+  - Разработка/тестирование → LLM_PROVIDER=groq (бесплатно)
+  - Продакшен → LLM_PROVIDER=anthropic или openai
+
+
+==============================================================
+АРХИТЕКТУРНЫЕ РЕШЕНИЯ
+==============================================================
+
+1. ПОРЯДОК РОУТЕРОВ (важен!)
+   1) start_router    — /start, /help
+   2) admin_router    — /stats, /broadcast (фильтр IsAdmin)
+   3) journal_router  — /journal
+   4) patterns_router — /patterns
+   5) settings_router — /settings
+   6) analyze_router  — ПОСЛЕДНИЙ (catch-all для текста)
+
+2. КОНФИГУРАЦИЯ
+   - pydantic-settings загружает .env с типизацией
+   - Валидация при старте: ошибки сразу видны
+   - Admin IDs из конфига, не хардкод
+
+3. ПРОМПТ
+   - Отдельный файл app/prompts/system_prompt.txt
+   - Извлекается из DOCS/mindlint_system_prompt.md
+   - Легко версионировать и редактировать
+
+4. FSM
+   - aiogram FSM для многошаговых диалогов
+   - Состояния: ожидание утверждения → уточнение → результат
+   - MemoryStorage (для SQLite-бота достаточно)
+
+5. БАЗА ДАННЫХ
+   - SQLite + aiosqlite (async)
+   - SQLAlchemy ORM + Repository pattern
+   - Alembic миграции с первого дня
+
+6. MIDDLEWARE
+   - database.py: инъекция сессии в хендлеры
+   - throttling.py: rate limiting (защита от перерасхода API)
+   - admin_check.py: проверка прав админа
+
+
+==============================================================
+ЗАВИСИМОСТИ (requirements.txt)
+==============================================================
+
+aiogram>=3.4
+aiosqlite
+sqlalchemy[asyncio]
+openai
+anthropic
+groq
+python-dotenv
+pydantic-settings
+alembic
+pytest
+pytest-asyncio
+
+
+==============================================================
+ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ (.env.example)
+==============================================================
+
+BOT_TOKEN=
+GROQ_API_KEY=
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+LLM_PROVIDER=groq
+LLM_TEMPERATURE=0.3
+GROQ_MODEL=llama-3.3-70b-versatile
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+OPENAI_MODEL=gpt-4o
+ADMIN_IDS=[123456789]
+DATABASE_URL=sqlite+aiosqlite:///./mindlint.db
+LOG_LEVEL=INFO
+
+
+==============================================================
+ПОРЯДОК РЕАЛИЗАЦИИ
+==============================================================
+
+Шаг 1: Инфраструктура
+  [ ] Создать структуру папок и __init__.py
+  [ ] Написать config.py, .env.example, requirements.txt, .gitignore
+  [ ] pip install -r requirements.txt
+
+Шаг 2: Минимальный бот
+  [ ] main.py — точка входа с asyncio.run()
+  [ ] bot.py — Bot + Dispatcher + роутеры
+  [ ] handlers/start.py — /start с приветственным сообщением
+  [ ] Проверка: бот отвечает на /start
+
+Шаг 3: LLM-интеграция
+  [ ] services/llm/base.py — абстрактный BaseLLMProvider
+  [ ] services/llm/groq.py — реализация Groq (начать с бесплатного)
+  [ ] services/llm/openai.py — реализация OpenAI
+  [ ] services/llm/anthropic.py — реализация Anthropic
+  [ ] services/llm/factory.py — фабрика провайдеров
+  [ ] prompts/system_prompt.txt — скопировать промпт из DOCS/
+  [ ] Проверка: отправить текст → получить анализ
+
+Шаг 4: Обработка сообщений
+  [ ] handlers/analyze.py — приём текста, вызов LLM, ответ
+  [ ] utils/typing_action.py — индикатор "печатает..."
+  [ ] utils/text_formatter.py — escape MarkdownV2
+  [ ] states/analysis.py — FSM для уточняющих вопросов
+  [ ] Проверка: полный цикл анализа работает
+
+Шаг 5: База данных
+  [ ] database/engine.py — async engine
+  [ ] database/models/ — User, Analysis
+  [ ] database/repositories/ — CRUD
+  [ ] middlewares/database.py — инъекция сессии
+  [ ] Настроить Alembic (alembic init, env.py)
+  [ ] Проверка: анализы сохраняются в БД
+
+Шаг 6: Журнал и паттерны
+  [ ] handlers/journal.py — /journal с пагинацией
+  [ ] handlers/patterns.py — /patterns
+  [ ] services/journal.py — выборка из БД
+  [ ] services/pattern_tracker.py — агрегация паттернов
+  [ ] keyboards/inline.py — кнопки навигации
+  [ ] Проверка: /journal показывает историю
+
+Шаг 7: Админка и безопасность
+  [ ] filters/admin.py — IsAdmin фильтр
+  [ ] handlers/admin.py — /stats, /broadcast
+  [ ] middlewares/throttling.py — rate limiting
+  [ ] Проверка: админ-команды работают, обычные юзеры не видят
+
+Шаг 8: Настройки пользователя
+  [ ] handlers/settings.py — /settings
+  [ ] keyboards/inline.py — кнопки настроек
+  [ ] Проверка: пользователь может менять настройки
+
+
+==============================================================
+ВЕРИФИКАЦИЯ
+==============================================================
+
+1. pip install -r requirements.txt
+2. Заполнить .env (начать с GROQ_API_KEY — бесплатный)
+3. python main.py
+4. Отправить боту /start → онбординг
+5. Отправить текст → анализ от LLM
+6. /journal → история анализов
+7. /patterns → повторяющиеся паттерны
