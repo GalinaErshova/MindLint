@@ -1,0 +1,497 @@
+==============================================================
+  MindLint — Детальный план разработки (11 блоков)
+  Каждый блок = видимый промежуточный результат
+==============================================================
+
+КОНТЕКСТ
+--------
+MindLint — Telegram-бот для логического анализа решений
+и обнаружения самообмана. Пользователь отправляет
+утверждение/решение → бот анализирует через LLM:
+декомпозиция на факты/причины/условия, поиск 5 паттернов
+логических дефектов. Бот НЕ даёт советов — только анализ.
+
+Структура папок создана (все файлы — пустые заглушки).
+
+
+==============================================================
+БЛОК 1. Фундамент — конфигурация и запуск пустого бота
+==============================================================
+
+ЦЕЛЬ: Бот запускается и отвечает на /start приветствием.
+
+РЕЗУЛЬТАТ: Отправить /start → получить приветствие.
+
+ЗАДАЧИ:
+  1.1  .env.example — шаблон переменных окружения
+       BOT_TOKEN, GROQ_API_KEY, LLM_PROVIDER=groq,
+       LLM_TEMPERATURE=0.3, GROQ_MODEL, ADMIN_IDS,
+       DATABASE_URL, LOG_LEVEL
+
+  1.2  app/config.py — Settings(BaseSettings) через pydantic-settings
+       Все переменные из .env с типизацией
+       model_config = SettingsConfigDict(env_file=".env")
+       Глобальный экземпляр settings = Settings()
+
+  1.3  app/utils/logging_config.py — функция setup_logging(level)
+       Формат: время, уровень, модуль. Один раз при старте.
+
+  1.4  app/bot.py — Bot + Dispatcher
+       Bot(token=settings.BOT_TOKEN), Dispatcher()
+       Функция register_routers(dp) — пока только start_router
+
+  1.5  app/handlers/start.py — роутер /start и /help
+       /start → приветствие: что такое MindLint, как пользоваться
+       /help → краткая справка по командам
+
+  1.6  main.py — точка входа
+       setup_logging(), создание бота, dp.start_polling(bot)
+
+ПРОВЕРКА:
+  pip install -r requirements.txt
+  cp .env.example .env   # заполнить BOT_TOKEN
+  python main.py
+  → /start → приветствие
+  → /help → справка
+  → В консоли логи без ошибок
+
+
+==============================================================
+БЛОК 2. LLM-провайдеры — подключение AI
+==============================================================
+
+ЦЕЛЬ: Бот умеет отправлять текст в LLM и получать ответ.
+
+РЕЗУЛЬТАТ: Тестовый запрос к Groq → получить анализ в консоли.
+
+ЗАДАЧИ:
+  2.1  app/services/llm/base.py — абстракция
+       @dataclass LLMResponse: content, model, tokens_used
+       class BaseLLMProvider(ABC):
+         async def generate(system_prompt, user_message) -> LLMResponse
+
+  2.2  app/services/llm/groq.py — Groq (бесплатный)
+       AsyncGroq(api_key=...), chat.completions.create()
+       Обработка ошибок с логированием
+
+  2.3  app/services/llm/openai.py — OpenAI
+       AsyncOpenAI(api_key=...), аналогичный интерфейс
+
+  2.4  app/services/llm/anthropic.py — Anthropic
+       AsyncAnthropic(api_key=...), system отдельным параметром
+
+  2.5  app/services/llm/factory.py — фабрика провайдеров
+       LLMProviderFactory.create("groq"|"openai"|"anthropic")
+
+  2.6  app/prompts/system_prompt.txt — чистый системный промпт
+       Извлечь из DOCS/mindlint_system_prompt.md
+       Без markdown-обёрток — только инструкции для LLM
+
+ПРОВЕРКА:
+  Тестовый скрипт: создать провайдер через фабрику,
+  отправить утверждение → получить анализ.
+  Переключить LLM_PROVIDER в .env → другой провайдер.
+
+
+==============================================================
+БЛОК 3. Основной цикл — анализ текста через бота
+==============================================================
+
+ЦЕЛЬ: Пользователь пишет текст → бот показывает "печатает..."
+→ отправляет логический анализ от LLM.
+
+РЕЗУЛЬТАТ: ★ ПЕРВЫЙ РАБОЧИЙ MVP ★
+Текст → анализ логики в Telegram.
+
+ЗАДАЧИ:
+  3.1  app/utils/typing_action.py — индикатор набора
+       Контекстный менеджер на базе ChatActionSender
+       Показывает "typing..." пока LLM генерирует
+
+  3.2  app/utils/text_formatter.py — форматирование
+       escape_markdown_v2(text) — экранирование MarkdownV2
+       split_message(text, max_len=4096) — разбивка длинных
+
+  3.3  app/services/analysis.py — сервис анализа
+       class AnalysisService:
+         загрузка промпта из файла → вызов LLM → форматирование
+       Обработка ошибок с user-friendly сообщением
+
+  3.4  app/handlers/analyze.py — основной хендлер
+       Router(), фильтр F.text (любой текст, не команда)
+       Показать typing → AnalysisService → отправить результат
+       Длинный ответ → разбить на части
+       ВАЖНО: роутер регистрируется ПОСЛЕДНИМ (catch-all)
+
+  3.5  Обновить app/bot.py — подключить analyze_router последним
+
+ПРОВЕРКА:
+  python main.py
+  → "Я не могу уволиться, потому что сейчас не время"
+    → Бот: "печатает..." → логический разбор
+    → Декомпозиция, паттерн D, уточняющий вопрос
+  → "Я учу Python, потому что востребовано и нравится"
+    → Бот: логика корректна (без ошибок)
+  → Длинный ответ разбивается на части
+
+
+==============================================================
+БЛОК 4. База данных — сохранение истории
+==============================================================
+
+ЦЕЛЬ: Каждый анализ сохраняется. Данные не теряются при
+перезапуске бота.
+
+РЕЗУЛЬТАТ: Перезапустить бота → данные на месте.
+
+ЗАДАЧИ:
+  4.1  app/database/models/base.py — DeclarativeBase
+       Общие поля: id, created_at
+
+  4.2  app/database/models/user.py — модель User
+       telegram_id (unique), username, first_name,
+       language_code, analysis_count, created_at,
+       last_active_at, is_active, settings_json
+
+  4.3  app/database/models/analysis.py — модель Analysis
+       user_id (FK → User), user_message, bot_response,
+       llm_provider, llm_model, tokens_used, created_at
+       Связь: User ↔ Analysis (one-to-many)
+
+  4.4  app/database/engine.py — async engine
+       create_async_engine(DATABASE_URL)
+       async_sessionmaker, create_tables()
+
+  4.5  app/database/repositories/user.py — UserRepository
+       get_or_create(), update_last_active(), get_stats()
+
+  4.6  app/database/repositories/analysis.py — AnalysisRepository
+       create(), get_by_user(limit, offset), count_by_user()
+
+  4.7  app/middlewares/database.py — инъекция сессии
+       Создаёт AsyncSession → data["session"] → закрывает
+
+  4.8  Обновить app/handlers/analyze.py
+       После анализа: сохранить в БД
+       Первое сообщение: get_or_create пользователя
+
+  4.9  Обновить main.py — create_tables() при старте
+
+  4.10 Настроить Alembic — migrations/env.py
+       Подключить модели, создать первую миграцию
+
+ПРОВЕРКА:
+  Отправить 3+ сообщения → перезапустить бота
+  Проверить mindlint.db → таблицы users, analyses
+  Все отправленные сообщения и ответы сохранены
+
+
+==============================================================
+БЛОК 5. Журнал решений — /journal
+==============================================================
+
+ЦЕЛЬ: Пользователь видит историю своих анализов
+с пагинацией по inline-кнопкам.
+
+РЕЗУЛЬТАТ: /journal → пагинированный список анализов.
+
+ЗАДАЧИ:
+  5.1  app/services/journal.py — сервис журнала
+       get_user_journal(session, telegram_id, page, per_page=5)
+       Формат записи: дата, текст (100 символов), анализ (200)
+       get_total_pages(session, telegram_id, per_page)
+
+  5.2  app/keyboards/inline.py — навигация
+       Кнопки: ⬅️ Назад | Страница X/Y | Вперёд ➡️
+       Callback data: journal:page:{N}
+       Кнопка детального просмотра: journal:detail:{id}
+
+  5.3  app/handlers/journal.py — хендлер /journal
+       Команда → первая страница
+       Callback обработчики: навигация по страницам
+       Детальный просмотр (по кнопке)
+       Пустой журнал → "Вы ещё не отправляли запросов"
+
+ПРОВЕРКА:
+  Отправить 6+ сообщений → /journal
+  → Список из 5 записей с кнопками навигации
+  → "Вперёд" → вторая страница
+  → Нажать на запись → полный текст анализа
+
+
+==============================================================
+БЛОК 6. Паттерны мышления — /patterns
+==============================================================
+
+ЦЕЛЬ: Бот показывает повторяющиеся паттерны логических
+ошибок пользователя.
+
+РЕЗУЛЬТАТ: /patterns → визуальная сводка паттернов.
+
+ЗАДАЧИ:
+  6.1  app/services/pattern_tracker.py — детектор паттернов
+       Загрузка всех анализов пользователя
+       Подсчёт 5 паттернов в ответах LLM:
+         A — Подмена причины чувством
+         B — Ложная необходимость
+         C — Циклическая логика
+         D — Неопределённое условие
+         E — Универсальное оправдание
+       Формирование сводки: частота, тренды
+
+  6.2  Обновить app/database/models/analysis.py
+       Добавить detected_patterns (JSON список)
+       Заполняется при анализе (парсинг ответа LLM)
+
+  6.3  app/handlers/patterns.py — хендлер /patterns
+       Сводка: "Ваши паттерны за N анализов:"
+       Визуализация: ███░░ Подмена причины — 3 раза
+       Мало данных (< 3) → "Нужно больше анализов"
+
+ПРОВЕРКА:
+  5+ анализов → /patterns
+  → Сводка с визуализацией частоты
+  → При малом кол-ве — информативное сообщение
+
+
+==============================================================
+БЛОК 7. FSM — многошаговый диалог анализа
+==============================================================
+
+ЦЕЛЬ: Бот задаёт уточняющие вопросы и продолжает анализ
+на основе ответов (диалоговый режим).
+
+РЕЗУЛЬТАТ: Кнопка "Уточнить" → продолжение диалога.
+
+ЗАДАЧИ:
+  7.1  app/states/analysis.py — FSM-состояния
+       class AnalysisStates(StatesGroup):
+         waiting_for_statement
+         waiting_for_clarification
+       Хранение контекста в FSM data
+
+  7.2  Обновить app/handlers/analyze.py
+       После анализа: кнопка "Уточнить" (InlineKeyboard)
+       Нажатие → состояние waiting_for_clarification
+       Следующее сообщение → продолжение диалога с LLM
+       Кнопка "Завершить анализ" → выход из FSM
+
+  7.3  Обновить app/services/analysis.py
+       continue_analysis(system_prompt, history, new_message)
+       Отправка с контекстом предыдущих сообщений
+
+ПРОВЕРКА:
+  Утверждение → анализ с кнопкой "Уточнить"
+  → Нажать → ответить → продолжение анализа
+  → "Завершить" → следующее сообщение = новый анализ
+
+
+==============================================================
+БЛОК 8. Админ-панель и безопасность
+==============================================================
+
+ЦЕЛЬ: Админ видит статистику, может рассылать сообщения.
+Есть защита от спама.
+
+РЕЗУЛЬТАТ: /stats → статистика. Rate limiting работает.
+
+ЗАДАЧИ:
+  8.1  app/filters/admin.py — фильтр IsAdmin
+       class IsAdmin(Filter): user.id in settings.ADMIN_IDS
+
+  8.2  app/middlewares/admin_check.py
+       Логирование попыток доступа к админ-командам
+
+  8.3  app/middlewares/throttling.py — rate limiting
+       N сообщений/мин на пользователя
+       Превышение → "Подождите немного"
+       Счётчики в памяти (dict с TTL)
+
+  8.4  app/handlers/admin.py — команды
+       /stats — кол-во пользователей, анализов, активные за 24ч
+       /broadcast <текст> — рассылка активным пользователям
+       Все команды защищены IsAdmin
+
+  8.5  Обновить app/bot.py
+       Подключить middleware: database → throttling
+       admin_router — второй после start
+
+ПРОВЕРКА:
+  Обычный аккаунт: /stats → тишина
+  Админ: /stats → статистика
+  10 сообщений подряд → rate limiting
+  /broadcast Тест → все получают сообщение
+
+
+==============================================================
+БЛОК 9. Настройки пользователя — /settings
+==============================================================
+
+ЦЕЛЬ: Пользователь настраивает формат ответа
+(детальный/краткий) и язык.
+
+РЕЗУЛЬТАТ: /settings → inline-клавиатура с настройками.
+
+ЗАДАЧИ:
+  9.1  app/handlers/settings.py
+       Текущие настройки через inline-клавиатуру
+       Режим: Детальный / Краткий
+       Язык: Русский / English
+       Callback обработчики
+
+  9.2  app/keyboards/inline.py — кнопки настроек
+       Callback data: settings:mode:detailed, settings:lang:ru
+
+  9.3  app/keyboards/reply.py — постоянная клавиатура
+       Кнопки: "Анализировать", "Журнал", "Паттерны", "Настройки"
+
+  9.4  Обновить app/services/analysis.py
+       Учитывать настройки при формировании промпта
+       Краткий: "Ответь кратко, 2-3 предложения"
+
+ПРОВЕРКА:
+  /settings → клавиатура
+  Краткий → анализ короткий
+  Детальный → анализ развёрнутый
+
+
+==============================================================
+БЛОК 10. Тесты и стабилизация
+==============================================================
+
+ЦЕЛЬ: Ключевая логика покрыта тестами. Бот стабилен.
+
+РЕЗУЛЬТАТ: pytest tests/ -v → все зелёные.
+
+ЗАДАЧИ:
+  10.1 tests/conftest.py — фикстуры
+       Тестовая БД (in-memory), mock LLM, фикстура сессии
+
+  10.2 tests/test_services/test_llm.py
+       Тест фабрики, mock-провайдера, обработки ошибок
+
+  10.3 tests/test_database/test_repositories.py
+       Создание пользователя, анализов, пагинация, статистика
+
+  10.4 Тесты хендлеров (опционально)
+       aiogram test utilities: /start, анализ с mock LLM
+
+  10.5 Стабилизация
+       Edge cases: пустое сообщение, длинный текст,
+       стикер/фото, graceful shutdown (Ctrl+C)
+
+ПРОВЕРКА:
+  pytest tests/ -v → все проходят
+  Стикеры, фото → корректная реакция
+  Ctrl+C → чистое завершение
+
+
+==============================================================
+БЛОК 11. Подготовка к деплою
+==============================================================
+
+ЦЕЛЬ: Бот готов к развёртыванию и длительной работе.
+
+РЕЗУЛЬТАТ: Свежий клон → pip install → python main.py → работает.
+
+ЗАДАЧИ:
+  11.1 .env.example — финальная ревизия переменных
+  11.2 Alembic — миграции актуальны и применимы с нуля
+  11.3 Dockerfile (опционально) — деплой на сервер
+  11.4 system_prompt.txt — финальная правка по результатам тестов
+  11.5 README.md — инструкция по установке и запуску
+
+ПРОВЕРКА:
+  Клон с нуля → pip install → .env → python main.py → работает
+  Все команды: /start, /help, /journal, /patterns, /settings, /stats
+  Полный цикл: текст → анализ → журнал → паттерны
+
+
+==============================================================
+ПОРЯДОК ЗАВИСИМОСТЕЙ
+==============================================================
+
+Блок 1 (фундамент)
+  ↓
+Блок 2 (LLM-провайдеры)
+  ↓
+Блок 3 (основной цикл)  ← ★ ПЕРВЫЙ РАБОЧИЙ MVP ★
+  ↓
+Блок 4 (база данных)
+  ↓
+Блок 5 (журнал)     ← можно параллельно с Блоком 6
+Блок 6 (паттерны)   ← можно параллельно с Блоком 5
+  ↓
+Блок 7 (FSM-диалоги)
+  ↓
+Блок 8 (админка)    ← можно параллельно с Блоком 9
+Блок 9 (настройки)  ← можно параллельно с Блоком 8
+  ↓
+Блок 10 (тесты)
+  ↓
+Блок 11 (деплой)
+
+
+==============================================================
+КЛЮЧЕВЫЕ ФАЙЛЫ ПО БЛОКАМ
+==============================================================
+
+Файл                                   | Блоки
+----------------------------------------|--------
+main.py                                 | 1, 4
+app/config.py                           | 1
+app/bot.py                              | 1, 3, 5, 8
+app/handlers/start.py                   | 1
+app/handlers/analyze.py                 | 3, 4, 7
+app/handlers/journal.py                 | 5
+app/handlers/patterns.py                | 6
+app/handlers/admin.py                   | 8
+app/handlers/settings.py                | 9
+app/services/llm/base.py               | 2
+app/services/llm/groq.py               | 2
+app/services/llm/openai.py             | 2
+app/services/llm/anthropic.py          | 2
+app/services/llm/factory.py            | 2
+app/services/analysis.py               | 3, 7, 9
+app/services/journal.py                | 5
+app/services/pattern_tracker.py        | 6
+app/database/engine.py                 | 4
+app/database/models/base.py            | 4
+app/database/models/user.py            | 4
+app/database/models/analysis.py        | 4, 6
+app/database/repositories/user.py      | 4
+app/database/repositories/analysis.py  | 4
+app/middlewares/database.py            | 4
+app/middlewares/throttling.py          | 8
+app/middlewares/admin_check.py         | 8
+app/filters/admin.py                   | 8
+app/keyboards/inline.py               | 5, 6, 9
+app/keyboards/reply.py                | 9
+app/states/analysis.py                | 7
+app/utils/logging_config.py           | 1
+app/utils/text_formatter.py           | 3
+app/utils/typing_action.py            | 3
+app/prompts/system_prompt.txt          | 2
+tests/conftest.py                      | 10
+tests/test_services/test_llm.py        | 10
+tests/test_database/test_repositories.py | 10
+
+
+==============================================================
+СКВОЗНОЙ ТЕСТ (после всех блоков)
+==============================================================
+
+1.  pip install -r requirements.txt
+2.  Заполнить .env (GROQ_API_KEY — бесплатный)
+3.  python main.py
+4.  /start → приветствие
+5.  "Я не могу начать бизнес, потому что ещё не готов"
+    → анализ с паттерном D (неопределённое условие)
+6.  "Уточнить" → ответ → продолжение анализа
+7.  "Завершить анализ"
+8.  Ещё 3-4 утверждения
+9.  /journal → пагинированная история
+10. /patterns → сводка паттернов
+11. /settings → краткий режим → короткий анализ
+12. /stats (админ) → статистика
+13. pytest tests/ -v → все зелёные
