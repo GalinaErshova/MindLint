@@ -1,22 +1,73 @@
-# Telegram Bot Python Rules
+# MindLint — AI Assistant Rules
 
-## 1. Технологический стек
-- Используй Python 3.10+ и библиотеку `python-telegram-bot` (предпочтительно v20+) или `aiogram` (укажи свою библиотеку).
-- Всегда используй `async/await` для хендлеров и сетевых запросов.
-- Храни конфигурацию (токены, ключи) исключительно в `.env` файле через `python-dotenv`.
+## 0. About the Project
+- MindLint is a Telegram bot for logical analysis of decisions and self-deception detection.
+- User sends a statement → the bot analyzes its logical structure via LLM: decomposition, pattern detection (cause substitution, false necessity, circular logic, undefined condition).
+- The bot **does NOT give advice, does NOT evaluate personality, does NOT do psychology**. Only logical analysis.
+- The bot must be able to confirm: "no self-deception detected" — this is critical for product trust.
 
-## 2. Архитектура и стиль
-- Разделяй логику: `main.py` (запуск), `handlers/` (обработка команд), `database/` (работа с БД), `utils/` (вспомогательные функции).
-- Следуй PEP 8. Используй Type Hinting для всех функций и аргументов.
-- Вместо глобальных переменных используй `context.user_data` или `context.bot_data` (для python-telegram-bot) или FSM (для aiogram).
+## 1. Tech Stack
+- Python 3.10+, **aiogram 3.x** (NOT python-telegram-bot).
+- Always use `async/await` for handlers and network requests.
+- Configuration: `pydantic-settings` loads `.env` with typing and validation at startup.
+- Database: `SQLAlchemy 2.x` (async) + `aiosqlite` + `Alembic` for migrations.
+- LLM: `openai`, `anthropic`, `groq` SDKs — three providers via Strategy Pattern.
+- Testing: `pytest` + `pytest-asyncio`.
 
-## 3. Безопасность и отказоустойчивость
-- Оборачивай вызовы API и работу с БД в `try-catch` блоки с логированием ошибок.
-- Никогда не хардкодь ID администраторов — выноси их в конфиг.
-- Для длительных операций всегда используй индикатор «typing» или «uploading...», чтобы пользователь видел активность.
+## 2. Architecture and Code Style
+- Follow PEP 8. Use Type Hinting for all functions and arguments.
+- Package structure:
+  - `main.py` — entry point (asyncio.run)
+  - `app/config.py` — pydantic-settings configuration
+  - `app/bot.py` — Bot + Dispatcher + router registration
+  - `app/handlers/` — routers (aiogram Router)
+  - `app/services/` — business logic
+  - `app/services/llm/` — LLM provider abstraction (base, factory, openai, anthropic, groq)
+  - `app/database/` — engine, models, repositories (Repository pattern)
+  - `app/middlewares/` — database, throttling, admin_check
+  - `app/keyboards/` — inline and reply keyboards
+  - `app/states/` — FSM states
+  - `app/filters/` — custom filters (IsAdmin)
+  - `app/prompts/` — system prompts for LLM (txt files)
+  - `app/utils/` — logging, text formatting, typing action
 
-## 4. Формат ответов ИИ
-- Если код большой, предлагай модульную структуру.
-- Сопровождай новые зависимости командой для установки (например, `pip install ...`). 
-- Пиши описание ко всем командам установки. 
-- Пиши комментарии к сложным регулярным выражениям или логике фильтров.
+## 3. aiogram 3.x Rules
+- Use `Router` for grouping handlers. Each file in `handlers/` is a separate Router.
+- Router registration order is critical:
+  1) start_router → 2) admin_router → 3) journal_router → 4) patterns_router → 5) settings_router → 6) analyze_router (catch-all for text, ALWAYS last).
+- For multi-step dialogues use aiogram FSM (`StatesGroup`, `State`). Storage: `MemoryStorage`.
+- Instead of global variables use FSM state data or middleware injection.
+- For "typing..." indicator use `ChatActionSender` from aiogram.
+
+## 4. LLM Integration Rules
+- All LLM providers implement the abstract `BaseLLMProvider` (ABC) from `app/services/llm/base.py`.
+- Provider switching via `LLM_PROVIDER` variable in `.env` (groq / anthropic / openai).
+- `LLMProviderFactory` in `app/services/llm/factory.py` creates the appropriate provider.
+- System prompt is stored in `app/prompts/system_prompt.txt` — do NOT hardcode it in Python code.
+- Groq (free tier) is used for development and testing, Anthropic/OpenAI for production.
+- Always use async clients: `AsyncOpenAI`, `AsyncAnthropic`, `AsyncGroq`.
+
+## 5. Database Rules
+- Use SQLAlchemy 2.x async ORM with `DeclarativeBase`.
+- Engine: `create_async_engine` + `async_sessionmaker`.
+- Data access via Repository pattern (`app/database/repositories/`).
+- Middleware `database.py` injects the session into handlers.
+- All migrations via Alembic. Create a migration when models change.
+
+## 6. Security and Resilience
+- Wrap LLM API calls and database operations in `try/except` with `logging`.
+- Never hardcode admin IDs — use `config.ADMIN_IDS`.
+- For long-running LLM requests always show the "typing" indicator.
+- Rate limiting via `throttling.py` middleware.
+- Never commit `.env`, tokens, or API keys.
+
+## 7. Telegram Specifics
+- For message formatting use `MarkdownV2` — escape special characters via `text_formatter.py`.
+- Split long LLM responses into parts (Telegram limit — 4096 characters).
+- Use inline keyboards for navigation (journal, patterns, settings).
+
+## 8. AI Assistant Response Format
+- For large code changes suggest a modular structure.
+- Include installation commands for new dependencies (`pip install ...`).
+- Add comments for complex regex or filter logic.
+- Write code in English (variable names, functions, classes). Comments and docstrings in Russian.
