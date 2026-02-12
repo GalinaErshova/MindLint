@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"d:\\\\VibeCode\\\\MindLint\\\\app\\\\handlers\"\" | grep \".py \")",
+      "Bash(python:*)",
+      "Bash(./venv/Scripts/python.exe:*)"
+    ]
+  }
+}

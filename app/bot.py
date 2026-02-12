@@ -4,7 +4,9 @@ from aiogram.enums import ParseMode
 
 from app.config import settings
 from app.handlers.start import start_router
+from app.handlers.journal import journal_router
 from app.handlers.analyze import analyze_router
+from app.middlewares.database import DatabaseMiddleware
 
 
 def create_bot() -> Bot:
@@ -16,10 +18,16 @@ def create_bot() -> Bot:
 
 def create_dispatcher() -> Dispatcher:
     dp = Dispatcher()
+    register_middlewares(dp)
     register_routers(dp)
     return dp
 
 
+def register_middlewares(dp: Dispatcher) -> None:
+    dp.update.middleware(DatabaseMiddleware())
+
+
 def register_routers(dp: Dispatcher) -> None:
     dp.include_router(start_router)
+    dp.include_router(journal_router)
     dp.include_router(analyze_router)  # последним — catch-all для текста

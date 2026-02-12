@@ -1,0 +1,3 @@
+Важно: база mindlint.db создаётся при первом запуске бота (create_tables()). 
+Если файла ещё нет — сначала запусти бота или выполни:
+.\venv\Scripts\python.exe -c "import asyncio; from app.database import create

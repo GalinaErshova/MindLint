@@ -22,5 +22,6 @@ async def cmd_help(message: Message) -> None:
     await message.answer(
         "<b>Доступные команды:</b>\n\n"
         "/start — начать работу с ботом\n"
+        "/journal — журнал анализов\n"
         "/help — справка по командам\n"
     )
