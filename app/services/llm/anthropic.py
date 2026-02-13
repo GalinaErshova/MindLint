@@ -37,3 +37,28 @@ class AnthropicProvider(BaseLLMProvider):
         except Exception:
             logger.exception("Anthropic API error")
             raise
+
+    async def generate_with_history(
+        self, system_prompt: str, messages: list[dict[str, str]]
+    ) -> LLMResponse:
+        try:
+            response = await self._client.messages.create(
+                model=self._model,
+                max_tokens=1024,
+                system=system_prompt,
+                messages=messages,
+                temperature=settings.llm_temperature,
+            )
+            content = response.content[0].text if response.content else ""
+            tokens_used = (
+                response.usage.input_tokens + response.usage.output_tokens
+            )
+
+            return LLMResponse(
+                content=content,
+                model=response.model,
+                tokens_used=tokens_used,
+            )
+        except Exception:
+            logger.exception("Anthropic API error")
+            raise

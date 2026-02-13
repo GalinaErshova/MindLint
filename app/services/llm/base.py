@@ -13,3 +13,10 @@ class BaseLLMProvider(ABC):
     @abstractmethod
     async def generate(self, system_prompt: str, user_message: str) -> LLMResponse:
         ...
+
+    @abstractmethod
+    async def generate_with_history(
+        self, system_prompt: str, messages: list[dict[str, str]]
+    ) -> LLMResponse:
+        """Генерация с полной историей сообщений [{"role": ..., "content": ...}, ...]."""
+        ...

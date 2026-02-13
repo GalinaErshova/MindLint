@@ -1,6 +1,27 @@
-"""Inline-клавиатуры для навигации по журналу."""
+"""Inline-клавиатуры: журнал, анализ."""
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+
+# --- Кнопки анализа (FSM) ---
+
+def analysis_actions_kb() -> InlineKeyboardMarkup:
+    """Кнопки после анализа: Уточнить / Завершить."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="\U0001f50d Уточнить",
+                callback_data="analysis:clarify",
+            ),
+            InlineKeyboardButton(
+                text="\u2705 Завершить",
+                callback_data="analysis:finish",
+            ),
+        ]
+    ])
+
+
+# --- Кнопки журнала ---
 
 
 def journal_entry_buttons(entries: list[dict]) -> list[list[InlineKeyboardButton]]:

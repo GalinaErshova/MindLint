@@ -34,3 +34,25 @@ class GroqProvider(BaseLLMProvider):
         except Exception:
             logger.exception("Groq API error")
             raise
+
+    async def generate_with_history(
+        self, system_prompt: str, messages: list[dict[str, str]]
+    ) -> LLMResponse:
+        try:
+            full_messages = [{"role": "system", "content": system_prompt}] + messages
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=full_messages,
+                temperature=settings.llm_temperature,
+            )
+            choice = response.choices[0].message
+            usage = response.usage
+
+            return LLMResponse(
+                content=choice.content or "",
+                model=response.model,
+                tokens_used=usage.total_tokens if usage else 0,
+            )
+        except Exception:
+            logger.exception("Groq API error")
+            raise

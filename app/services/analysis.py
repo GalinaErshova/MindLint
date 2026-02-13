@@ -30,3 +30,23 @@ class AnalysisService:
         except Exception:
             logger.exception("Analysis failed")
             raise
+
+    async def continue_analysis(
+        self, conversation_history: list[dict[str, str]], new_message: str
+    ) -> LLMResponse:
+        """Продолжить анализ с полным контекстом предыдущих сообщений."""
+        messages = conversation_history + [{"role": "user", "content": new_message}]
+        try:
+            response = await self._provider.generate_with_history(
+                system_prompt=self._system_prompt,
+                messages=messages,
+            )
+            logger.info(
+                "Continued analysis: provider=%s, tokens=%d",
+                settings.llm_provider,
+                response.tokens_used,
+            )
+            return response
+        except Exception:
+            logger.exception("Continue analysis failed")
+            raise

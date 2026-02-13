@@ -212,3 +212,63 @@ All required packages already in requirements.txt:
 - PatternTracker aggregation works: 5 analyses -> correct counts per pattern
 - Progress bar visualization: `█████` filled proportionally to max count
 - `< 3 analyses` shows "need more data" message
+
+---
+
+# Block 7: FSM Multi-Turn Dialogue — Context & Implementation Log
+
+## Status: COMPLETED
+
+## Files Modified/Created in Block 7
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/states/analysis.py` | Implemented | AnalysisStates(StatesGroup) with waiting_for_clarification |
+| `app/services/llm/base.py` | Updated | Added abstract generate_with_history() |
+| `app/services/llm/groq.py` | Updated | Implemented generate_with_history() |
+| `app/services/llm/openai.py` | Updated | Implemented generate_with_history() |
+| `app/services/llm/anthropic.py` | Updated | Implemented generate_with_history() |
+| `app/services/analysis.py` | Updated | Added continue_analysis(history, new_message) |
+| `app/keyboards/inline.py` | Updated | Added analysis_actions_kb() with Clarify/Finish buttons |
+| `app/handlers/analyze.py` | Rewritten | FSM logic: initial analysis -> buttons -> clarification loop |
+
+## Architecture
+
+### FSM Flow
+```
+User sends text
+    -> handle_text(): analyze, save, show buttons [Уточнить | Завершить]
+    -> state.update_data(history=[...])
+
+User clicks "Уточнить"
+    -> cb_clarify(): set state waiting_for_clarification
+    -> "Напишите уточнение..."
+
+User sends clarification text
+    -> handle_clarification(): continue_analysis with full history
+    -> save to DB, update history, show buttons again
+
+User clicks "Завершить"
+    -> cb_finish(): state.clear()
+```
+
+### LLM Provider Changes
+- `generate_with_history(system_prompt, messages)` — sends full conversation as messages list
+- Groq/OpenAI: system message + messages list
+- Anthropic: system param + messages list (Anthropic API style)
+
+### Callback Data
+- `analysis:clarify` — enter clarification mode
+- `analysis:finish` — clear FSM, end dialogue
+
+### Handler Order in analyze_router
+1. `handle_clarification` — state filter `AnalysisStates.waiting_for_clarification` (FIRST, state-specific)
+2. `cb_clarify` / `cb_finish` — callback handlers
+3. `handle_text` — catch-all for text without state (LAST)
+
+## Verification
+- All imports OK
+- FSM state registered: `AnalysisStates:waiting_for_clarification`
+- Keyboard: 2 buttons (clarify + finish)
+- continue_analysis method exists in AnalysisService
+- All 3 providers have generate_with_history()
