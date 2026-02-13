@@ -272,3 +272,54 @@ User clicks "Завершить"
 - Keyboard: 2 buttons (clarify + finish)
 - continue_analysis method exists in AnalysisService
 - All 3 providers have generate_with_history()
+
+---
+
+# Block 8: Admin Panel & Security — Context & Implementation Log
+
+## Status: COMPLETED
+
+## Files Modified/Created in Block 8
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/filters/admin.py` | Implemented | IsAdmin(Filter) — checks user.id in settings.admin_ids |
+| `app/middlewares/admin_check.py` | Implemented | Logs non-admin attempts to use /stats, /broadcast |
+| `app/middlewares/throttling.py` | Implemented | Rate limiting: 5 messages per 60s per user |
+| `app/handlers/admin.py` | Implemented | /stats (full stats), /broadcast (send to all active users) |
+| `app/bot.py` | Updated | Added AdminCheckMiddleware, ThrottlingMiddleware, admin_router |
+| `app/database/repositories/user.py` | Updated | Extended get_stats() with today stats, added get_active_users() |
+
+## Architecture
+
+### IsAdmin Filter
+- Applied to entire `admin_router` via `admin_router.message.filter(IsAdmin())`
+- Non-admin users' messages to /stats, /broadcast simply won't match
+
+### Middleware Order
+1. `DatabaseMiddleware` (on `dp.update`) — session for all events
+2. `AdminCheckMiddleware` (on `dp.message`) — logs unauthorized attempts
+3. `ThrottlingMiddleware` (on `dp.message`) — rate limits messages
+
+### ThrottlingMiddleware
+- In-memory dict `{user_id: [timestamp, ...]}` with sliding window
+- Max 5 messages per 60 seconds
+- Expired timestamps cleaned on each check
+- Shows "Подождите немного..." on throttle
+
+### Router Registration Order
+`start` -> `admin` -> `journal` -> `patterns` -> `analyze` (catch-all last)
+
+### /stats Output
+- Total users, active users, active today
+- Total analyses, analyses today
+
+### /broadcast
+- `/broadcast <text>` — sends to all active users
+- Reports sent/failed counts
+
+## Verification
+- All imports OK
+- Router order: ['start', 'admin', 'journal', 'patterns', 'analyze']
+- get_stats returns 5 fields including today metrics
+- get_active_users returns all is_active=True users

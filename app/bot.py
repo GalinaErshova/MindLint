@@ -3,11 +3,14 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from app.config import settings
-from app.handlers.start import start_router
+from app.handlers.admin import admin_router
+from app.handlers.analyze import analyze_router
 from app.handlers.journal import journal_router
 from app.handlers.patterns import patterns_router
-from app.handlers.analyze import analyze_router
+from app.handlers.start import start_router
+from app.middlewares.admin_check import AdminCheckMiddleware
 from app.middlewares.database import DatabaseMiddleware
+from app.middlewares.throttling import ThrottlingMiddleware
 
 
 def create_bot() -> Bot:
@@ -26,10 +29,13 @@ def create_dispatcher() -> Dispatcher:
 
 def register_middlewares(dp: Dispatcher) -> None:
     dp.update.middleware(DatabaseMiddleware())
+    dp.message.middleware(AdminCheckMiddleware())
+    dp.message.middleware(ThrottlingMiddleware())
 
 
 def register_routers(dp: Dispatcher) -> None:
     dp.include_router(start_router)
+    dp.include_router(admin_router)
     dp.include_router(journal_router)
     dp.include_router(patterns_router)
     dp.include_router(analyze_router)  # последним — catch-all для текста
