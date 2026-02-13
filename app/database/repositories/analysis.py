@@ -17,6 +17,7 @@ class AnalysisRepository:
         llm_provider: str | None = None,
         llm_model: str | None = None,
         tokens_used: int = 0,
+        detected_patterns: str | None = None,
     ) -> Analysis:
         """Сохранить результат анализа в БД."""
         analysis = Analysis(
@@ -26,6 +27,7 @@ class AnalysisRepository:
             llm_provider=llm_provider,
             llm_model=llm_model,
             tokens_used=tokens_used,
+            detected_patterns=detected_patterns,
         )
         session.add(analysis)
         await session.commit()

@@ -106,8 +106,109 @@ All required packages already in requirements.txt:
 - Middleware + dispatcher integration verified
 
 ## Notes for Future Blocks
-- Block 5 (Journal): use `AnalysisRepository.get_by_user()` with pagination for /journal
 - Block 6 (Patterns): may need new model/table for pattern tracking
 - Block 8 (Admin): use `UserRepository.get_stats()` for admin dashboard
 - Block 9 (Settings): use `User.settings_json` field for per-user settings storage
 - When modifying models, always create a new Alembic migration: `alembic revision --autogenerate -m "description"`
+
+---
+
+# Block 5: Journal /journal — Context & Implementation Log
+
+## Status: COMPLETED
+
+## Files Modified/Created in Block 5
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/services/journal.py` | Implemented | JournalService: get_user_journal, get_total_pages, get_analysis_detail |
+| `app/keyboards/inline.py` | Implemented | journal_page_kb (entries + nav), journal_detail_back_kb |
+| `app/handlers/journal.py` | Implemented | /journal command, callback handlers for pagination and detail view |
+| `app/handlers/start.py` | Updated | Added /journal to /help command list |
+| `app/bot.py` | Updated | Registered journal_router (after start, before analyze) |
+| `app/database/repositories/analysis.py` | Updated | Added get_by_id() method |
+
+## Architecture
+
+### JournalService API (`app/services/journal.py`)
+- `get_user_journal(session, telegram_id, page, per_page=5) -> list[dict]` — paginated entries with truncated text
+- `get_total_pages(session, telegram_id, per_page=5) -> int` — total page count
+- `get_analysis_detail(session, analysis_id) -> Analysis | None` — full analysis for detail view
+
+### Inline Keyboards (`app/keyboards/inline.py`)
+- `journal_page_kb(entries, page, total_pages)` — entry buttons + navigation row
+- `journal_detail_back_kb(page)` — back to list button
+
+### Callback Data Format
+- `journal:page:{N}` — navigate to page N
+- `journal:detail:{analysis_id}` — show full analysis
+- `journal:noop` — page indicator (no action)
+
+### Handler Flow
+1. `/journal` -> show page 1 (or "no entries" message)
+2. Click entry button -> edit message with full analysis + back button
+3. Click nav buttons -> edit message with new page
+4. Click "back" -> return to page list
+
+## Router Registration Order
+`start_router` -> `journal_router` -> `analyze_router` (catch-all last)
+
+## Verification
+- All imports OK
+- Page 1: 5 entries, Page 2: 2 entries (7 total, per_page=5) -> 2 pages
+- get_by_id works for existing/non-existing IDs
+- Keyboard generates correct rows (entries + navigation)
+
+---
+
+# Block 6: Patterns /patterns — Context & Implementation Log
+
+## Status: COMPLETED
+
+## Files Modified/Created in Block 6
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/services/pattern_tracker.py` | Implemented | PATTERNS dict, detect_patterns(), PatternTracker class |
+| `app/handlers/patterns.py` | Implemented | /patterns command handler |
+| `app/database/models/analysis.py` | Updated | Added `detected_patterns` (Text, nullable) |
+| `app/database/repositories/analysis.py` | Updated | Added `detected_patterns` param to create() |
+| `app/handlers/analyze.py` | Updated | Detects patterns in LLM response, saves to DB |
+| `app/handlers/start.py` | Updated | Added /patterns to /help |
+| `app/bot.py` | Updated | Registered patterns_router |
+| `migrations/versions/6e9a3405ea7b_...py` | Auto-generated | ADD COLUMN detected_patterns to analyses |
+
+## 5 Patterns (from system_prompt.txt)
+
+| Code | Name | Detection Markers |
+|------|------|-------------------|
+| A | Подмена причины ощущением | "паттерн a", "подмена причины", "не могу без метрик" |
+| B | Ложная необходимость | "паттерн b", "ложная необходимость", "нужно сначала" |
+| C | Циклическая логика | "паттерн c", "циклическая логика", "замкнутый круг" |
+| D | Неопределённое условие | "паттерн d", "неопределённое условие", "когда буду готов" |
+| E | Универсальное оправдание | "паттерн e", "универсальное оправдание", "одна причина объясняет" |
+
+## Architecture
+
+### detect_patterns(bot_response) -> list[str]
+- Regex-based detection of pattern codes in LLM response text
+- Returns list of found codes, e.g. `["A", "D"]`
+
+### PatternTracker API
+- `get_user_patterns(session, telegram_id) -> dict` — loads all analyses, counts patterns
+- `format_patterns_text(data) -> str` — formats with progress bars and HTML
+
+### Storage
+- `detected_patterns` field in analyses table stores JSON list: `["A", "D"]`
+- Filled on each new analysis in analyze handler
+- Fallback: if field is empty, re-parses bot_response on the fly
+
+## Router Registration Order
+`start_router` -> `journal_router` -> `patterns_router` -> `analyze_router`
+
+## Verification
+- All 5 patterns detected correctly from test responses
+- Empty response returns `[]`
+- PatternTracker aggregation works: 5 analyses -> correct counts per pattern
+- Progress bar visualization: `█████` filled proportionally to max count
+- `< 3 analyses` shows "need more data" message

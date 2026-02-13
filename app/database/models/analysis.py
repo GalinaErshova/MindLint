@@ -22,6 +22,7 @@ class Analysis(Base):
     llm_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     tokens_used: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    detected_patterns: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="analyses")
 

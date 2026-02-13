@@ -23,5 +23,6 @@ async def cmd_help(message: Message) -> None:
         "<b>Доступные команды:</b>\n\n"
         "/start — начать работу с ботом\n"
         "/journal — журнал анализов\n"
+        "/patterns — паттерны мышления\n"
         "/help — справка по командам\n"
     )

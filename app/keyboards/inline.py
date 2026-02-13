@@ -10,7 +10,7 @@ def journal_entry_buttons(entries: list[dict]) -> list[list[InlineKeyboardButton
         short = entry["short_message"][:40]
         rows.append([
             InlineKeyboardButton(
-                text=f"f4c4 {entry['date']} — {short}",
+                text=f"\U0001f4c4 {entry['date']} \u2014 {short}",
                 callback_data=f"journal:detail:{entry['analysis_id']}",
             )
         ])
@@ -24,14 +24,14 @@ def journal_page_kb(entries: list[dict], page: int, total_pages: int) -> InlineK
     nav_buttons = []
     if page > 1:
         nav_buttons.append(
-            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"journal:page:{page - 1}")
+            InlineKeyboardButton(text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434", callback_data=f"journal:page:{page - 1}")
         )
     nav_buttons.append(
         InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="journal:noop")
     )
     if page < total_pages:
         nav_buttons.append(
-            InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"journal:page:{page + 1}")
+            InlineKeyboardButton(text="\u0412\u043f\u0435\u0440\u0451\u0434 \u27a1\ufe0f", callback_data=f"journal:page:{page + 1}")
         )
     rows.append(nav_buttons)
 
@@ -41,5 +41,5 @@ def journal_page_kb(entries: list[dict], page: int, total_pages: int) -> InlineK
 def journal_detail_back_kb(page: int) -> InlineKeyboardMarkup:
     """Кнопка возврата к списку из детального просмотра."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ К списку", callback_data=f"journal:page:{page}")]
+        [InlineKeyboardButton(text="\u2b05\ufe0f \u041a \u0441\u043f\u0438\u0441\u043a\u0443", callback_data=f"journal:page:{page}")]
     ])

@@ -10,6 +10,7 @@ from app.config import settings
 from app.database.repositories.user import UserRepository
 from app.database.repositories.analysis import AnalysisRepository
 from app.services.analysis import AnalysisService
+from app.services.pattern_tracker import detect_patterns, patterns_to_json
 from app.utils.text_formatter import split_message
 from app.utils.typing_action import typing_action
 
@@ -41,6 +42,10 @@ async def handle_text(message: Message, session: AsyncSession) -> None:
             )
             return
 
+    # Определить паттерны в ответе LLM
+    detected = detect_patterns(response.content)
+    patterns_json = patterns_to_json(detected)
+
     # Сохранить анализ в БД
     try:
         await AnalysisRepository.create(
@@ -51,6 +56,7 @@ async def handle_text(message: Message, session: AsyncSession) -> None:
             llm_provider=settings.llm_provider,
             llm_model=response.model,
             tokens_used=response.tokens_used,
+            detected_patterns=patterns_json,
         )
         await UserRepository.increment_analysis_count(session, message.from_user.id)
         await UserRepository.update_last_active(session, message.from_user.id)
